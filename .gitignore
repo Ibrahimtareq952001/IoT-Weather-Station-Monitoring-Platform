@@ -1,0 +1,22 @@
+# Maven build output — never commit compiled artifacts
+target/
+*.class
+*.jar
+
+# Claude Code local settings — machine-specific paths, not for version control
+.claude/
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+*.code-workspace
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Runtime data (created when the system runs — not source code)
+data/
+*.jfr
+*.csv

@@ -1,0 +1,84 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Local development cluster. Run with: docker compose up -d
+#
+# Ports exposed to your Mac:
+#   Kafka:       localhost:9094  (connect from JAR running locally)
+#   Zookeeper:   localhost:2181
+#   Kibana:      localhost:5601  (added later)
+#   Elasticsearch: localhost:9200 (added later)
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Zookeeper ─────────────────────────────────────────────────────────────
+  # Kafka 3.x still supports Zookeeper mode. We use it here because our
+  # K8s deployment will also use Zookeeper (matches production topology).
+  zookeeper:
+    image: bitnami/zookeeper:3.9
+    container_name: weather-zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    volumes:
+      - zookeeper-data:/bitnami/zookeeper
+    networks:
+      - weather-net
+    healthcheck:
+      # ruok = "are you ok?" — Zookeeper responds "imok" when ready
+      test: ["CMD-SHELL", "echo ruok | nc -w 2 localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Kafka ──────────────────────────────────────────────────────────────────
+  kafka:
+    image: bitnami/kafka:3.7
+    container_name: weather-kafka
+    ports:
+      # 9094 is the EXTERNAL listener — used by JARs running on your host Mac.
+      # We use 9094 (not 9092) to avoid conflicts if you have a local Kafka install.
+      - "9094:9094"
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+
+      # Two listeners on two ports:
+      #   PLAINTEXT://  → used inside Docker network (container-to-container)
+      #   EXTERNAL://   → used from your host Mac
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,EXTERNAL://:9094
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+
+      # Allow Kafka to auto-create topics on first message — convenient for dev.
+      # In production you'd disable this and create topics explicitly.
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+
+      # Each topic gets 10 partitions by default.
+      # One partition per station means per-station ordering is guaranteed.
+      - KAFKA_CFG_NUM_PARTITIONS=10
+
+      - ALLOW_PLAINTEXT_LISTENER=yes
+    volumes:
+      - kafka-data:/bitnami/kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy   # waits for Zookeeper ruok, not just container start
+    networks:
+      - weather-net
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list 2>/dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  zookeeper-data:
+  kafka-data:
+
+networks:
+  weather-net:
+    driver: bridge
