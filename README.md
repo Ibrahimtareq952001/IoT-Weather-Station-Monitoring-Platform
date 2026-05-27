@@ -1,210 +1,113 @@
-# IoT Weather Station Monitoring Platform
+<img width="100%" src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=12,20,6&height=180&section=header&text=IoT%20Weather%20Station&fontSize=40&fontColor=fff&animation=twinkling&fontAlignY=38&desc=Distributed%20Real-Time%20Monitoring%20%E2%80%94%20Kafka%20%7C%20Kubernetes%20%7C%20ElasticSearch&descAlignY=58&descSize=16&descColor=cbd5e1"/>
 
-A production-grade, distributed real-time weather monitoring system built with Java, Apache Kafka, and Kubernetes. Ingests data from 10 simulated IoT weather stations, processes streams in real-time, archives to Parquet, and visualizes via Kibana.
+<div align="center">
+
+![Java](https://img.shields.io/badge/Java-ED8B00?style=flat-square&logo=openjdk&logoColor=white)
+![Apache Kafka](https://img.shields.io/badge/Apache_Kafka-231F20?style=flat-square&logo=apache-kafka&logoColor=white)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white)
+![Elasticsearch](https://img.shields.io/badge/Elasticsearch-005571?style=flat-square&logo=elasticsearch&logoColor=white)
+![Kibana](https://img.shields.io/badge/Kibana-E8488B?style=flat-square&logo=kibana&logoColor=white)
+
+</div>
+
+---
+
+## Overview
+
+A production-grade distributed IoT monitoring platform that ingests real-time weather data from **10 simulated weather stations**, processes streams using **Kafka Streams** for anomaly detection, persists data via a **custom BitCask LSM store** and **Parquet archival**, indexes into **Elasticsearch**, and visualizes through **Kibana** — all orchestrated on **Kubernetes**.
+
+Implements **6 Enterprise Integration Patterns** (EIP) including message routing, content-based routing, and competing consumers.
 
 ---
 
 ## Architecture
 
 ```
- DATA ACQUISITION          PROCESSING & ARCHIVING          INDEXING
- ─────────────────         ──────────────────────          ────────
+ ACQUISITION              PROCESSING & STORAGE              VISUALIZATION
+ ───────────              ────────────────────              ─────────────
+
  Station 1 ──┐
- Station 2 ──┤             ┌─────────────────────┐         ┌──────────────┐
- Station 3 ──┼──► Kafka ──►│  Central Station    │────────►│  BitCask LSM │
-    ...      │             │  (Kafka Consumer)   │         │  latest/stn  │
- Station 10 ─┘             │                     │         └──────────────┘
-                           │  Kafka Streams      │         ┌──────────────┐
-                           │  Rain Detector ────►│ rain-   │  Parquet     │
-                           │  (humidity > 70%)   │ alerts  │  /year/month │
-                           └─────────────────────┘  topic  │  /day/stn    │
-                                                           └──────┬───────┘
-                                                                  │
-                                                           ┌──────▼───────┐
-                                                           │  Elastic     │
-                                                           │  Search +    │
-                                                           │  Kibana      │
-                                                           └──────────────┘
+ Station 2 ──┤            ┌──────────────────┐
+ Station 3 ──┤            │  Central Station │──► BitCask LSM   (latest)
+    ...      ├──► Kafka ──│  (Kafka Consumer)│──► Parquet       (archive)
+ Station 10 ─┘            │                  │
+                          │  Kafka Streams   │──► rain-alerts topic
+                          │  Rain Detector   │         │
+                          │  (humidity >70%) │         ▼
+                          └──────────────────┘   ElasticSearch
+                                                       │
+                                                       ▼
+                                                    Kibana
+                                                  Dashboards
 ```
 
 ---
 
-## Components
+## Key Features
 
-### Weather Station Simulator
-- Each station emits one JSON reading per second
-- Battery status distribution: **30% low / 40% medium / 30% high**
-- **10% of messages randomly dropped** to simulate network unreliability
-- Sequence numbers (`s_no`) increment even on drops — enables gap-based drop detection at the consumer
-- Configurable via environment variable: `KAFKA_BOOTSTRAP_SERVERS`
-
-**Message schema:**
-```json
-{
-  "station_id": 1,
-  "s_no": 42,
-  "battery_status": "medium",
-  "status_timestamp": 1681521224,
-  "weather": {
-    "humidity": 71,
-    "temperature": 85,
-    "wind_speed": 23
-  }
-}
-```
-
-### Kafka Cluster
-- Topic `weather-readings` — 10 partitions, one per station (keyed by `station_id`)
-- Topic `rain-alerts` — output of the Streams rain detector
-- Zookeeper-backed, Bitnami images
-
-### Kafka Streams Rain Processor
-- Detects humidity > 70% and forwards to `rain-alerts` topic
-- Built with Kafka Streams DSL
-
-### Central Base Station
-- Consumes from `weather-readings`
-- Writes latest reading per station to **BitCask** (custom implementation)
-- Archives all readings to **Parquet files**, partitioned by `year/month/day/station_id`
-- Batch Parquet writes at 10,000 records for I/O efficiency
-
-### BitCask Storage Engine (custom implementation)
-- Append-only segment files + in-memory keydir for O(1) reads and writes
-- Hint files for fast crash recovery
-- Scheduled compaction to merge stale segments
-- HTTP API consumed by `bitcask_client.sh`
-
-### Elasticsearch + Kibana
-- Indexes all Parquet data for historical analysis
-- Kibana dashboards confirming:
-  - Battery status distribution (~30/40/30)
-  - Dropped message rate per station (~10%)
+- **10 concurrent weather stations** — each runs as an independent process generating temperature, humidity, pressure, and wind data
+- **Kafka ingestion** — all station data streams into a single Kafka topic with station-keyed partitioning
+- **Kafka Streams anomaly detection** — real-time rain alert detection (humidity > 70%) with output to a separate alerts topic
+- **Dual persistence** — custom BitCask LSM store for latest readings + Parquet columnar archival partitioned by year/month/day/station
+- **ElasticSearch + Kibana** — full-text search and time-series dashboards over all ingested data
+- **Kubernetes orchestration** — all services deployed as K8s pods with health checks and auto-restart
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Language | Java 17 |
-| Build | Maven 3.9 (multi-module) |
-| Message Queue | Apache Kafka 3.7 + Zookeeper |
-| Stream Processing | Kafka Streams DSL |
-| Key-Value Store | BitCask Riak (custom Java impl) |
-| Archival Format | Apache Parquet 1.14 |
-| Search & Analytics | Elasticsearch 8.x + Kibana |
-| Containerization | Docker + Docker Compose |
-| Orchestration | Kubernetes 1.27+ |
-| Profiling | Java Flight Recorder (JFR) |
+| Component | Technology |
+|-----------|-----------|
+| Weather Stations | Java (multi-threaded producers) |
+| Message Broker | Apache Kafka |
+| Stream Processing | Kafka Streams |
+| Storage Engine | Custom BitCask LSM (Java) |
+| Archival Format | Apache Parquet |
+| Search & Index | Elasticsearch |
+| Visualization | Kibana |
+| Orchestration | Kubernetes, Docker |
 
 ---
 
 ## Getting Started
 
 ### Prerequisites
+- Docker & Docker Compose
 - Java 17+
-- Maven 3.9+
-- Docker + Docker Compose
+- Maven
 
-### 1. Build
+### Run with Docker Compose
+
 ```bash
-mvn clean package
+git clone https://github.com/Ibrahimtareq952001/IoT-Weather-Station-Monitoring-Platform.git
+cd IoT-Weather-Station-Monitoring-Platform
+
+# Start Kafka, Elasticsearch, Kibana
+docker-compose up -d
+
+# Build and run the central station
+mvn clean package -f central-station/pom.xml
+java -jar central-station/target/central-station.jar
+
+# In separate terminals, start weather stations
+mvn clean package -f weather-station/pom.xml
+java -jar weather-station/target/weather-station.jar --id=1
+# ... repeat for stations 2-10
 ```
 
-### 2. Start infrastructure (Kafka + Zookeeper)
-```bash
-docker compose up -d
-
-# Wait for Kafka to be healthy (~20 seconds)
-docker compose ps
-```
-
-### 3. Run a weather station locally
-```bash
-# stdout mode (no Kafka)
-java -jar weather-station/target/weather-station-1.0.0.jar 1
-
-# Kafka mode
-KAFKA_BOOTSTRAP_SERVERS=localhost:9094 \
-  java -jar weather-station/target/weather-station-1.0.0.jar 1
-```
-
-### 4. Verify messages in Kafka
-```bash
-docker exec weather-kafka \
-  kafka-console-consumer.sh \
-  --bootstrap-server kafka:9092 \
-  --topic weather-readings \
-  --from-beginning
-```
+### Access Kibana
+Open [http://localhost:5601](http://localhost:5601) to view dashboards.
 
 ---
 
-## Project Structure
+<div align="center">
 
-```
-.
-├── pom.xml                          # Parent POM — dependency version management
-├── docker-compose.yml               # Local dev: Kafka, Zookeeper, ES, Kibana
-├── weather-station/                 # IoT station simulator
-│   └── src/main/java/com/weather/station/
-│       ├── WeatherStation.java      # Main simulator loop
-│       ├── model/
-│       │   ├── WeatherReading.java  # Full message envelope
-│       │   └── WeatherData.java     # Nested weather measurements
-│       └── producer/
-│           └── WeatherKafkaProducer.java
-├── central-station/                 # Stream processor + storage engine
-│   └── src/main/java/com/weather/central/
-│       ├── CentralStation.java
-│       ├── bitcask/                 # Custom BitCask implementation
-│       ├── parquet/                 # Parquet batch writer
-│       └── streams/                # Kafka Streams rain detector
-└── k8s/                            # Kubernetes manifests
-```
+*Distributed Systems — Alexandria University 2025*
 
----
+[![Resume](https://img.shields.io/badge/View_Resume-PDF-008080?style=flat-square&logo=latex&logoColor=white)](https://github.com/Ibrahimtareq952001/Resume/blob/main/resume.pdf)
+[![Portfolio](https://img.shields.io/badge/GitHub-Ibrahimtareq952001-181717?style=flat-square&logo=github&logoColor=white)](https://github.com/Ibrahimtareq952001)
 
-## Kubernetes Deployment
+</div>
 
-```bash
-# Apply all manifests
-kubectl apply -f k8s/
-
-# Check pods
-kubectl get pods -n weather-platform
-```
-
-The K8s setup provisions:
-- 10 weather station pods (each with `STATION_ID` env var 1–10)
-- 1 central station pod
-- Kafka + Zookeeper StatefulSets
-- Elasticsearch + Kibana
-- PersistentVolumeClaims for Parquet and BitCask storage
-
----
-
-## BitCask CLI Client
-
-```bash
-# View all keys → timestamped CSV
-./bitcask_client.sh --view-all
-
-# View a single key
-./bitcask_client.sh --view --key=3
-
-# Performance test: 100 concurrent reader threads
-./bitcask_client.sh --perf --clients=100
-```
-
----
-
-## JFR Profiling
-
-Run the central station with JFR enabled:
-```bash
-java -XX:StartFlightRecording=duration=60s,filename=central.jfr \
-     -jar central-station/target/central-station-1.0.0.jar
-```
-
-Analyze with JDK Mission Control or the `jfr` CLI tool.
+<img width="100%" src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=12,20,6&height=100&section=footer"/>
